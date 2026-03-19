@@ -217,11 +217,8 @@ export default function CopyKilat() {
 
       if (!resp.ok) {
         const errData = await resp.json().catch(() => ({}));
-        const msg = errData?.error?.message || `API Error ${resp.status}`;
-        if (msg.includes("quota") || msg.includes("rate")) {
-          throw new Error("Server sedang sibuk, coba lagi dalam beberapa detik.");
-        }
-        throw new Error(msg);
+        const msg = errData?.error?.message || errData?.error || `API Error ${resp.status}`;
+        throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
       }
 
       const data = await resp.json();
