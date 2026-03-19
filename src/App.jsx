@@ -11,7 +11,7 @@ const MODES = [
       { key: "product", label: "Produk / Topik", placeholder: "Contoh: Serum wajah vitamin C, Kopi susu kekinian, dll", type: "text" },
       { key: "audience", label: "Target Audience", placeholder: "Contoh: Wanita 18-30 tahun, pecinta skincare", type: "text" },
       { key: "tone", label: "Gaya Bahasa", placeholder: "Contoh: Santai, lucu, profesional, aesthetic", type: "text" },
-      { key: "promo", label: "Promo / CTA (opsional)", placeholder: "Contoh: Diskon 50% hari ini aja!", type: "text" },
+      { key: "promo", label: "Promo / CTA (opsional)", placeholder: "Contoh: Diskon 50% hari ini aja!", type: "text", optional: true },
       { key: "hashtag", label: "Mau pakai hashtag?", type: "toggle" },
     ],
   },
@@ -170,17 +170,13 @@ export default function CopyKilat() {
   };
 
   const generate = async () => {
-    if (!apiKey) {
-      setShowApiKeyInput(true);
-      return;
-    }
     if (usageCount >= DAILY_LIMIT) {
       setError(`Limit harian tercapai (${DAILY_LIMIT}x/hari). Upgrade ke Pro untuk unlimited! 🚀`);
       return;
     }
 
     const mode = MODES.find((m) => m.id === selectedMode);
-    const requiredFields = mode.fields.filter((f) => f.type !== "toggle" && f.type !== "select");
+    const requiredFields = mode.fields.filter((f) => f.type !== "toggle" && f.type !== "select" && !f.optional);
     const missing = requiredFields.filter((f) => !formData[f.key]?.trim());
     if (missing.length > 0) {
       setError(`Isi dulu: ${missing.map((f) => f.label).join(", ")}`);
@@ -191,23 +187,41 @@ export default function CopyKilat() {
     setError("");
     setResult("");
 
+    const payload = {
+      system_instruction: { parts: [{ text: getSystemPrompt(selectedMode, formData) }] },
+      contents: [{ parts: [{ text: buildUserPrompt(selectedMode, formData) }] }],
+      generationConfig: { temperature: 0.9, maxOutputTokens: 2048 },
+    };
+
     try {
-      const resp = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-        {
+      let resp;
+
+      if (apiKey) {
+        // User punya API key sendiri — panggil Gemini langsung
+        resp = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          }
+        );
+      } else {
+        // Pakai server proxy (API key di server)
+        resp = await fetch("/api/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            system_instruction: { parts: [{ text: getSystemPrompt(selectedMode, formData) }] },
-            contents: [{ parts: [{ text: buildUserPrompt(selectedMode, formData) }] }],
-            generationConfig: { temperature: 0.9, maxOutputTokens: 2048 },
-          }),
-        }
-      );
+          body: JSON.stringify(payload),
+        });
+      }
 
       if (!resp.ok) {
         const errData = await resp.json().catch(() => ({}));
-        throw new Error(errData?.error?.message || `API Error ${resp.status}`);
+        const msg = errData?.error?.message || `API Error ${resp.status}`;
+        if (msg.includes("quota") || msg.includes("rate")) {
+          throw new Error("Server sedang sibuk, coba lagi dalam beberapa detik.");
+        }
+        throw new Error(msg);
       }
 
       const data = await resp.json();
@@ -414,7 +428,7 @@ export default function CopyKilat() {
 
       <div style={{ marginTop: 40, textAlign: "center" }}>
         <div style={{ display: "inline-flex", gap: 24, flexWrap: "wrap", justifyContent: "center" }}>
-          {["🚀 Gratis 5x/hari", "🇮🇩 Bahasa Indonesia", "⚡ Hasil instan"].map((t) => (
+          {["🚀 Gratis, tanpa daftar", "🇮🇩 Bahasa Indonesia", "⚡ Hasil instan"].map((t) => (
             <span key={t} style={{ fontSize: 13, color: "#7A7A8A" }}>{t}</span>
           ))}
         </div>
@@ -425,7 +439,7 @@ export default function CopyKilat() {
           style={{ fontSize: 12, color: "#55555F", cursor: "pointer", textDecoration: "underline" }}
           onClick={() => setShowApiKeyInput(true)}
         >
-          ⚙️ Set API Key
+          ⚙️ {apiKey ? "Ganti API Key" : "Pakai API Key sendiri (opsional)"}
         </span>
         {apiKey && (
           <span style={{ fontSize: 12, color: "#4ADE80", marginLeft: 12 }}>
@@ -696,9 +710,10 @@ export default function CopyKilat() {
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>🔑 Masukkan Gemini API Key</div>
+            <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>🔑 API Key Sendiri (Opsional)</div>
             <div style={{ fontSize: 13, color: "#7A7A8A", marginBottom: 16, lineHeight: 1.5 }}>
-              Gratis! Ambil di{" "}
+              Kamu bisa pakai CopyKilat tanpa API key. Tapi kalau mau pakai key sendiri
+              untuk kuota lebih besar, ambil gratis di{" "}
               <a
                 href="https://aistudio.google.com/apikey"
                 target="_blank"
@@ -708,7 +723,7 @@ export default function CopyKilat() {
                 aistudio.google.com/apikey
               </a>
               <br />
-              Key kamu disimpan di browser, tidak dikirim ke mana-mana.
+              Key disimpan di browser kamu saja.
             </div>
             <input
               style={{ ...styles.input, marginBottom: 14 }}
@@ -728,6 +743,18 @@ export default function CopyKilat() {
               >
                 Simpan
               </button>
+              {apiKey && (
+                <button
+                  style={{ ...styles.button(false), flex: 1, justifyContent: "center", color: "#EF4444" }}
+                  onClick={() => {
+                    setApiKey("");
+                    localStorage.removeItem("ck_api_key");
+                    setShowApiKeyInput(false);
+                  }}
+                >
+                  Hapus Key
+                </button>
+              )}
               <button
                 style={{ ...styles.button(false), flex: 1, justifyContent: "center" }}
                 onClick={() => setShowApiKeyInput(false)}
